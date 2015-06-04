@@ -279,6 +279,9 @@ func (l *Log) Close() {
 
 // SetWriter sets Log's writer depending on LogDestination.
 func (l *Log) SetWriter(init bool) {
+	l.Lock()
+	defer l.Unlock()
+
 	// Catch initialization case without breaking up any more of the
 	// logic.
 	if init {
