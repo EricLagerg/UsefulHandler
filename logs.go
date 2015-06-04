@@ -48,8 +48,8 @@ var (
 	// ArchiveDir is the directory where the archives will be stored.
 	// If set to "" (empty string) it'll be set to the current directory.
 	// It defaults to "archives", so it'll look a little something like
-	// this: '/home/user/files/archive/'
-	ArchiveDir = "archive"
+	// this: '/home/user/files/archives/'
+	ArchiveDir = "archives"
 
 	// MaxFileSize is the maximum size of a log file in bytes.
 	// It defaults to 1 Gigabyte (multiple of 1024, not 1000),
@@ -65,6 +65,9 @@ var (
 	// cur is the current log iteration. E.g., if there are 10
 	// archived logs, cur will be 11.
 	cur int64
+
+	// out is the current io.Writer
+	out io.Writer
 )
 
 // Log is a wrapper for a log file to provide mutex locks.
@@ -74,12 +77,32 @@ type Log struct {
 	*sync.RWMutex          // mutex for locking
 }
 
+func SetLog() {
+	LogFile, _ = NewLog()
+	LogFile.Start()
+}
+
 // NewLog returns a new Log initialized to the default values.
 // If no log file exists with the name specified in 'LogName'
 // it'll create a new one, otherwise it opens 'LogName'.
 // If it cannot create or open a file it'll return nil for *Log
 // and the applicable error.
 func NewLog() (*Log, error) {
+	file, err := newFile()
+	if err != nil {
+		return nil, err
+	}
+
+	stat, err := file.Stat()
+	if err != nil {
+		panic(err)
+	}
+	size := stat.Size()
+
+	return &Log{file, size, &sync.RWMutex{}}, nil
+}
+
+func newFile() (*os.File, error) {
 	file, err := os.OpenFile(LogName,
 		os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600)
 
@@ -87,7 +110,7 @@ func NewLog() (*Log, error) {
 		return nil, err
 	}
 
-	return &Log{file, 0, &sync.RWMutex{}}, nil
+	return file, nil
 }
 
 // Start beings the logging.
@@ -149,31 +172,38 @@ func findCur() {
 // full) log will be compressed and added to the archive and a new
 // log generated.
 func (l *Log) Rotate() {
+	var err error
+
 	l.Lock()
 
-	randName := randName(ArchiveDir, "ARCHIVE")
+	randName := randName("ARCHIVE")
 
 	// Rename so we can release our lock on the file asap.
 	os.Rename(LogName, randName)
 
-	// Reset our Log and release our lock.
-	l, err := NewLog()
+	// Reset our Log.
+	l.file, err = newFile()
+	if err != nil {
+		panic(err)
+	}
+
+	l.size = 0
+	setWriter()
 	l.Unlock()
 
 	// From here on out we don't need to worry about time because we've
 	// already moved the Log file and created a new, unlocked one for
 	// our handler to write to.
-
 	path := filepath.Join(ArchiveDir, LogName)
 
 	// E.g., "access.log_01.gz"
 	// We throw in the underscore before the number to try to help
 	// identify our numbering scheme even if the user picks a wacky
 	// file that includes numbers and stuff.
-	archiveName := fmt.Sprintf("%s_%02d_.gz", path, cur)
+	archiveName := fmt.Sprintf("%s#%02d_.gz", path, cur)
 	cur++
 
-	archive, err := os.Open(archiveName)
+	archive, err := os.Create(archiveName)
 	if err != nil {
 		panic(err)
 	}
@@ -202,6 +232,17 @@ func (l *Log) Rotate() {
 	}
 }
 
+func setWriter() {
+	switch LogDestination {
+	case Stdout:
+		out = os.Stdout
+	case File:
+		out = LogFile.file
+	default:
+		out = io.MultiWriter(os.Stdout, LogFile.file)
+	}
+}
+
 // Borrowed from https://golang.org/src/io/ioutil/tempfile.go#L19
 
 var rand uint32
@@ -223,10 +264,10 @@ func nextSuffix() string {
 	return strconv.Itoa(int(1e9 + r%1e9))[1:]
 }
 
-func randName(dir, prefix string) (name string) {
+func randName(prefix string) (name string) {
 	nconflict := 0
 	for i := 0; i < 10000; i++ {
-		name := filepath.Join(dir, prefix+nextSuffix())
+		name = prefix + nextSuffix()
 		f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 		if os.IsExist(err) {
 			if nconflict++; nconflict > 10 {
@@ -234,7 +275,7 @@ func randName(dir, prefix string) (name string) {
 			}
 			continue
 		}
-		f.Close()
+		defer f.Close()
 		break
 	}
 	return

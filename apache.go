@@ -63,11 +63,10 @@ func (r *ApacheLogRecord) Log(out io.Writer) {
 	case NCSALog:
 	case RefererLog:
 	case AgentLog:
-	default:
 	}
 
 	if LogFile.size+int64(n) >= MaxFileSize {
-		LogFile.Rotate()
+		go LogFile.Rotate()
 	}
 
 	LogFile.size += int64(n)
@@ -113,5 +112,5 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	record.time = finishTime.UTC()
 	record.elapsedTime = finishTime.Sub(startTime)
 
-	record.Log(h.out)
+	record.Log(out)
 }
