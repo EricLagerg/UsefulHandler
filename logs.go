@@ -76,7 +76,11 @@ var (
 	cur int64
 )
 
-// Log is a wrapper for a log file to provide mutex locks.
+// Log is a structure with our open file we log to, the size of said file
+// (measured by the number of bytes written to it, or it's size on
+// initialization), our current writer (usually Stdout and the
+// aforementioned file), our pool of random names, and a mutex lock
+// to keep race conditions from tripping us up.
 type Log struct {
 	file          *os.File  // pointer to the open file
 	size          int64     // number of bytes written to file
@@ -207,15 +211,25 @@ func (l *Log) Rotate() {
 	// Rename so we can release our lock on the file asap.
 	os.Rename(LogName, randName)
 
-	// Reset our Log.
+	// Replace our physical file.
 	l.file, err = newFile()
 	if err != nil {
 		panic(err)
 	}
 
+	// Reset the size.
 	l.size = 0
+
+	// Reset the writer (underlying io.Writer would otherwise point to the
+	// fd of the old, renamed file).
 	l.SetWriter(false)
+
+	// We don't need to do any other actions that could cause race
+	// conditions, so unlock the file.
 	l.Unlock()
+
+	// Place the used name back into the pool for future use.
+	l.pool.put(randName)
 
 	// From here on out we don't need to worry about time because we've
 	// already moved the Log file and created a new, unlocked one for
