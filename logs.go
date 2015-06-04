@@ -82,11 +82,11 @@ var (
 // aforementioned file), our pool of random names, and a mutex lock
 // to keep race conditions from tripping us up.
 type Log struct {
-	file          *os.File  // pointer to the open file
-	size          int64     // number of bytes written to file
-	out           io.Writer // current io.Writer
-	pool          *randPool // pool of random names
-	*sync.RWMutex           // mutex for locking
+	file        *os.File  // pointer to the open file
+	size        int64     // number of bytes written to file
+	out         io.Writer // current io.Writer
+	pool        *randPool // pool of random names
+	*sync.Mutex           // mutex for locking
 }
 
 // SetLog sets LogFile and starts the check for 'cur'.
@@ -123,7 +123,7 @@ func NewLog() (*Log, error) {
 		size,
 		nil,
 		newRandPool(25),
-		&sync.RWMutex{},
+		&sync.Mutex{},
 	}
 
 	log.SetWriter(true)
@@ -285,16 +285,15 @@ func (l *Log) SetWriter(init bool) {
 	// logic.
 	if init {
 		l.out = io.MultiWriter(os.Stdout, l.file)
-		return
-	}
-
-	switch LogDestination {
-	case Stdout:
-		l.out = os.Stdout
-	case File:
-		l.out = LogFile.file
-	default:
-		l.out = io.MultiWriter(os.Stdout, LogFile.file)
+	} else {
+		switch LogDestination {
+		case Stdout:
+			l.out = os.Stdout
+		case File:
+			l.out = LogFile.file
+		default:
+			l.out = io.MultiWriter(os.Stdout, LogFile.file)
+		}
 	}
 }
 
