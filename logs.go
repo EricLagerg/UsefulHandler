@@ -272,6 +272,11 @@ func (l *Log) Rotate() {
 	}
 }
 
+// Close closes the Log file.
+func (l *Log) Close() {
+	l.file.Close()
+}
+
 // SetWriter sets Log's writer depending on LogDestination.
 func (l *Log) SetWriter(init bool) {
 	// Catch initialization case without breaking up any more of the
