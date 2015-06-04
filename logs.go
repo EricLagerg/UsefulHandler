@@ -274,6 +274,8 @@ func (l *Log) Rotate() {
 
 // Close closes the Log file.
 func (l *Log) Close() {
+	l.Lock()
+	defer l.Unlock()
 	l.file.Close()
 }
 
