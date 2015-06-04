@@ -149,7 +149,7 @@ func (l *Log) Start() {
 	// inside a Goroutine because, unless there's a *ton* of archive
 	// files and the current Log is just shy of MaxFileSize, it'll
 	// finish before Log fills up and needs to be rotated.
-	go findCur()
+	findCur()
 }
 
 // findCur finds the current archive log number. If any errors occur it'll
@@ -203,8 +203,6 @@ func findCur() {
 func (l *Log) Rotate() {
 	var err error
 
-	l.Lock()
-
 	// For speed.
 	randName := l.pool.get()
 
@@ -224,13 +222,13 @@ func (l *Log) Rotate() {
 	// fd of the old, renamed file).
 	l.SetWriter(false)
 
-	// We don't need to do any other actions that could cause race
-	// conditions, so unlock the file.
-	l.Unlock()
-
 	// Place the used name back into the pool for future use.
 	l.pool.put(randName)
 
+	go doRotate(randName)
+}
+
+func doRotate(randName string) {
 	// From here on out we don't need to worry about time because we've
 	// already moved the Log file and created a new, unlocked one for
 	// our handler to write to.

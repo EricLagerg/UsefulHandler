@@ -75,7 +75,7 @@ func (r *ApacheLogRecord) Log(out io.Writer) {
 	}
 
 	if LogFile.size+int64(n) >= MaxFileSize {
-		go LogFile.Rotate()
+		LogFile.Rotate()
 	}
 
 	LogFile.size += int64(n)
