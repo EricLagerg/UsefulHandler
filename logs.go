@@ -16,10 +16,15 @@ import (
 // For ease of use.
 const (
 	Byte     = 1
+	B        = Byte
 	Kilobyte = 1024 * Byte
+	KB       = Kilobyte
 	Megabyte = 1024 * Kilobyte
+	MB       = Megabyte
 	Gigabyte = 1024 * Megabyte
+	GB       = Gigabyte
 	Terabyte = 1024 * Gigabyte
+	TB       = Terabyte
 )
 
 type dest uint8
@@ -30,6 +35,10 @@ const (
 	File
 	Both
 )
+
+// archPrefix is the temporary archive file's prefix before
+// randName appends a random string of digits to the end.
+const archPrefix = "._archive"
 
 var (
 	// LogFormat determines the format of the log. Most standard
@@ -65,20 +74,26 @@ var (
 	// cur is the current log iteration. E.g., if there are 10
 	// archived logs, cur will be 11.
 	cur int64
-
-	// out is the current io.Writer
-	out io.Writer
 )
 
 // Log is a wrapper for a log file to provide mutex locks.
 type Log struct {
-	file          *os.File // pointer to the open file
-	size          int64    // number of bytes written to file
-	*sync.RWMutex          // mutex for locking
+	file          *os.File  // pointer to the open file
+	size          int64     // number of bytes written to file
+	out           io.Writer // current io.Writer
+	pool          *randPool // pool of random names
+	*sync.RWMutex           // mutex for locking
 }
 
+// SetLog sets LogFile and starts the check for 'cur'.
 func SetLog() {
-	LogFile, _ = NewLog()
+	var err error
+
+	LogFile, err = NewLog()
+	if err != nil {
+		panic(err)
+	}
+
 	LogFile.Start()
 }
 
@@ -99,21 +114,31 @@ func NewLog() (*Log, error) {
 	}
 	size := stat.Size()
 
-	return &Log{file, size, &sync.RWMutex{}}, nil
-}
-
-func newFile() (*os.File, error) {
-	file, err := os.OpenFile(LogName,
-		os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600)
-
-	if err != nil {
-		return nil, err
+	log := &Log{
+		file,
+		size,
+		nil,
+		newRandPool(25),
+		&sync.RWMutex{},
 	}
 
-	return file, nil
+	log.SetWriter(true)
+
+	return log, nil
 }
 
-// Start beings the logging.
+// newFile returns a 'new' file to write logs to.
+// It's simply a wrapper around os.OpenFile.
+// While it says 'new', it'll return an already existing log file
+// if one exists.
+func newFile() (file *os.File, err error) {
+	file, err = os.OpenFile(LogName,
+		os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600)
+	return
+}
+
+// Start begins the check for 'cur'.
+// TOOD: Implement this better.
 func (l *Log) Start() {
 
 	// Check for the current archive log number. It *should* be fine
@@ -157,7 +182,7 @@ func findCur() {
 		panic("Could not find current file number.")
 	}
 
-	u := strings.LastIndex(highest[h:], "_")
+	u := strings.LastIndex(highest[:], "_")
 	if u == -1 {
 		panic("Could not find current file number.")
 	}
@@ -176,7 +201,8 @@ func (l *Log) Rotate() {
 
 	l.Lock()
 
-	randName := randName("ARCHIVE")
+	// For speed.
+	randName := l.pool.get()
 
 	// Rename so we can release our lock on the file asap.
 	os.Rename(LogName, randName)
@@ -188,7 +214,7 @@ func (l *Log) Rotate() {
 	}
 
 	l.size = 0
-	setWriter()
+	l.SetWriter(false)
 	l.Unlock()
 
 	// From here on out we don't need to worry about time because we've
@@ -200,7 +226,7 @@ func (l *Log) Rotate() {
 	// We throw in the underscore before the number to try to help
 	// identify our numbering scheme even if the user picks a wacky
 	// file that includes numbers and stuff.
-	archiveName := fmt.Sprintf("%s#%02d_.gz", path, cur)
+	archiveName := fmt.Sprintf("%s#%010d_.gz", path, cur)
 	cur++
 
 	archive, err := os.Create(archiveName)
@@ -232,14 +258,72 @@ func (l *Log) Rotate() {
 	}
 }
 
-func setWriter() {
+// SetWriter sets Log's writer depending on LogDestination.
+func (l *Log) SetWriter(init bool) {
+	// Catch initialization case without breaking up any more of the
+	// logic.
+	if init {
+		l.out = io.MultiWriter(os.Stdout, l.file)
+		return
+	}
+
 	switch LogDestination {
 	case Stdout:
-		out = os.Stdout
+		l.out = os.Stdout
 	case File:
-		out = LogFile.file
+		l.out = LogFile.file
 	default:
-		out = io.MultiWriter(os.Stdout, LogFile.file)
+		l.out = io.MultiWriter(os.Stdout, LogFile.file)
+	}
+}
+
+// randPool is a pool of random names used for rotating log files.
+type randPool struct {
+	c chan string
+	*sync.Mutex
+}
+
+// newRandPool creates a new pool of random names and immediately
+// initializes the pool with N new names.
+func newRandPool(n int) *randPool {
+	pool := &randPool{
+		make(chan string, n),
+		&sync.Mutex{},
+	}
+
+	for i := 0; i < n; i++ {
+		pool.put(randName(archPrefix))
+	}
+
+	return pool
+}
+
+// get gets a name from the pool, or generates a new name if none
+// exist.
+func (p *randPool) get() (s string) {
+	p.Lock()
+	defer p.Unlock()
+
+	select {
+	case s = <-p.c:
+		// get a name from the pool
+	default:
+		return randName(archPrefix)
+	}
+	return
+}
+
+// put puts a new name (back) into the pool, or discards it if the pool
+// is full.
+func (p *randPool) put(s string) {
+	p.Lock()
+	defer p.Unlock()
+
+	select {
+	case p.c <- s:
+		// place back into pool
+	default:
+		// discard if pool is full
 	}
 }
 
@@ -268,14 +352,13 @@ func randName(prefix string) (name string) {
 	nconflict := 0
 	for i := 0; i < 10000; i++ {
 		name = prefix + nextSuffix()
-		f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+		_, err := os.Stat(name)
 		if os.IsExist(err) {
 			if nconflict++; nconflict > 10 {
 				rand = reseed()
 			}
 			continue
 		}
-		defer f.Close()
 		break
 	}
 	return

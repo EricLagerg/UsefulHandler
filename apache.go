@@ -19,7 +19,7 @@ const (
 
 	// NCSALog is
 	// "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-agent}i\""
-	NCSALog = "%s [%s] %s %d \"%d\" %f\n \"%s\" \"%s\""
+	NCSALog = "%s - - [%s] \"%s %d %d\" %f\n \"%s\" \"%s\""
 
 	// RefererLog is "%{Referer}i -> %U"
 	RefererLog = "%s -> %s"
@@ -39,7 +39,7 @@ type ApacheLogRecord struct {
 	status                int
 	responseBytes         int64
 	elapsedTime           time.Duration
-	agent                 string
+	referer, agent        string
 }
 
 // Log will log an entry to the io.Writer specified by LogDestination.
@@ -54,15 +54,24 @@ func (r *ApacheLogRecord) Log(out io.Writer) {
 
 	switch LogFormat {
 	case CommonLog:
-		n, _ = fmt.Fprintf(out, CommonLog, r.ip, timeFormatted,
+		n, _ = fmt.Fprintf(LogFile.out, CommonLog, r.ip, timeFormatted,
 			requestLine, r.status, r.responseBytes, r.elapsedTime.Seconds())
 	case CommonLogWithVHost:
-		n, _ = fmt.Fprintf(out, CommonLogWithVHost, "-", r.ip,
+		n, _ = fmt.Fprintf(LogFile.out, CommonLogWithVHost, "-", r.ip,
 			timeFormatted, requestLine, r.status, r.responseBytes,
 			r.elapsedTime.Seconds())
 	case NCSALog:
+		n, _ = fmt.Fprintf(LogFile.out, NCSALog, r.ip,
+			timeFormatted, requestLine, r.status, r.responseBytes,
+			r.elapsedTime.Seconds(), r.referer, r.agent)
 	case RefererLog:
+		n, _ = fmt.Fprintf(LogFile.out, RefererLog, r.referer, r.uri)
 	case AgentLog:
+		n, _ = fmt.Fprintf(LogFile.out, AgentLog, r.agent)
+	default:
+		// Common log.
+		n, _ = fmt.Fprintf(LogFile.out, CommonLog, r.ip, timeFormatted,
+			requestLine, r.status, r.responseBytes, r.elapsedTime.Seconds())
 	}
 
 	if LogFile.size+int64(n) >= MaxFileSize {
@@ -102,6 +111,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		protocol:       r.Proto,
 		status:         http.StatusOK,
 		elapsedTime:    time.Duration(0),
+		referer:        r.Referer(),
 		agent:          r.UserAgent(),
 	}
 
@@ -112,5 +122,5 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	record.time = finishTime.UTC()
 	record.elapsedTime = finishTime.Sub(startTime)
 
-	record.Log(out)
+	record.Log(LogFile.out)
 }
