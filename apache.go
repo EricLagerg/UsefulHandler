@@ -44,9 +44,6 @@ type ApacheLogRecord struct {
 
 // Log will log an entry to the io.Writer specified by LogDestination.
 func (r *ApacheLogRecord) Log(out io.Writer) {
-	LogFile.Lock()
-	defer LogFile.Unlock()
-
 	timeFormatted := r.time.Format("02/Jan/2006 03:04:05")
 	requestLine := fmt.Sprintf("%s %s %s", r.method, r.uri, r.protocol)
 
@@ -122,5 +119,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	record.time = finishTime.UTC()
 	record.elapsedTime = finishTime.Sub(startTime)
 
+	LogFile.Lock()
+	defer LogFile.Unlock()
 	record.Log(LogFile.out)
 }
