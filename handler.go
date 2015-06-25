@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	ch "github.com/EricLagerg/compressedhandler"
-	// sh "github.com/unrolled/secure"
 )
 
 // Handler is a wrapper around http.Handler in order for us
@@ -18,8 +17,6 @@ type Handler struct {
 // NewUsefulHandler returns a *Handler with logging capabilities as well
 // as potentially compressed content.
 func NewUsefulHandler(handler http.Handler) http.Handler {
-	// LogFile.SetWriter()
-
 	return &Handler{
 		ch.CompressedHandler(handler),
 	}

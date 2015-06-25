@@ -98,7 +98,7 @@ type Log struct {
 func (l *Log) Init() {
 	if l == nil {
 		var err error
-		l, err = NewLog()
+		l, err = NewLog(nil)
 		if err != nil {
 			panic(err)
 		}
@@ -112,10 +112,13 @@ func (l *Log) Init() {
 // it'll create a new one, otherwise it opens 'LogName'.
 // If it cannot create or open a file it'll return nil for *Log
 // and the applicable error.
-func NewLog() (*Log, error) {
+func NewLog(opts *Options) (*Log, error) {
+	if opts == nil {
+		opts = defaultOptions()
+	}
 
 	log := &Log{
-		Opts: defaultOptions(),
+		Opts: opts,
 	}
 
 	file, err := log.newFile()
