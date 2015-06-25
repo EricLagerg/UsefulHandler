@@ -95,10 +95,10 @@ type Log struct {
 }
 
 // Init sets LogFile and starts the check for 'cur'.
-func (l *Log) Init() {
+func (l *Log) Init(opts *Options) {
 	if l == nil {
 		var err error
-		l, err = NewLog(nil)
+		l, err = NewLog(opts)
 		if err != nil {
 			panic(err)
 		}
@@ -114,7 +114,7 @@ func (l *Log) Init() {
 // and the applicable error.
 func NewLog(opts *Options) (*Log, error) {
 	if opts == nil {
-		opts = defaultOptions()
+		opts = DefaultOptions()
 	}
 
 	log := &Log{
@@ -142,9 +142,9 @@ func NewLog(opts *Options) (*Log, error) {
 	return log, nil
 }
 
-// defaultOptions returns the default configuration for the Options
+// DefaultOptions returns the default configuration for the Options
 // structure.
-func defaultOptions() *Options {
+func DefaultOptions() *Options {
 	return &Options{
 		LogFormat:      CommonLog,
 		LogDestination: Both,
