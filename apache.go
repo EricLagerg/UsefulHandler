@@ -1,7 +1,6 @@
 package useful
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -12,26 +11,49 @@ import (
 // https://httpd.apache.org/docs/2.2/mod/mod_log_config.html
 const (
 	// CommonLog is "%h %l %u %t \"%r\" %>s %b"
-	CommonLog = "%s - - [%s] \"%s %d %d\" %f\n"
+	commonLogFmt = "%s - - [%s] \"%s %d %d\" %f\n"
 
 	// CommonLogWithVHost is "%v %h %l %u %t \"%r\" %>s %b"
-	CommonLogWithVHost = "%s %s - - [%s] \"%s %d %d\" %f\n"
+	commonLogWithVHostFmt = "%s %s - - [%s] \"%s %d %d\" %f\n"
 
 	// NCSALog is
 	// "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-agent}i\""
-	NCSALog = "%s - - [%s] \"%s %d %d\" %f\n \"%s\" \"%s\""
+	ncsaLogFmt = "%s - - [%s] \"%s %d %d\" %f\n \"%s\" \"%s\""
 
 	// RefererLog is "%{Referer}i -> %U"
-	RefererLog = "%s -> %s"
+	refererLogFmt = "%s -> %s"
 
 	// AgentLog is "%{User-agent}i"
-	AgentLog = "%s"
+	agentLogFmt = "%s"
+)
+
+type (
+	// LogPrinter is a struct with a string format. An example use
+	// of the format would be inside the Print method.
+	// This allows more extensibility by providing the ability
+	// to change the pre-defined formats.
+	// LogPrinter         struct{ Format string }
+	commonLog          struct{ Format string }
+	commonLogWithVHost struct{ Format string }
+	ncsaLog            struct{ Format string }
+	refererLog         struct{ Format string }
+	agentLog           struct{ Format string }
+)
+
+// Log format types.
+var (
+	CommonLog          = commonLog{commonLogFmt}
+	CommonLogWithVHost = commonLogWithVHost{commonLogWithVHostFmt}
+	NCSALog            = ncsaLog{ncsaLogFmt}
+	RefererLog         = refererLog{refererLogFmt}
+	AgentLog           = agentLog{agentLogFmt}
 )
 
 // ApacheLogRecord is a structure containing the necessary information
 // to write a proper log in the ApacheFormatPattern.
 type ApacheLogRecord struct {
 	http.ResponseWriter
+	LogFmt
 
 	ip                    string
 	time                  time.Time
@@ -44,34 +66,10 @@ type ApacheLogRecord struct {
 
 // Log will log an entry to the io.Writer specified by LogDestination.
 func (r *ApacheLogRecord) Log(out io.Writer) {
-	timeFormatted := r.time.Format("02/Jan/2006 03:04:05")
-	requestLine := fmt.Sprintf("%s %s %s", r.method, r.uri, r.protocol)
 
-	var n int
+	n := r.Print(out, r)
 
-	switch LogFormat {
-	case CommonLog:
-		n, _ = fmt.Fprintf(LogFile.out, CommonLog, r.ip, timeFormatted,
-			requestLine, r.status, r.responseBytes, r.elapsedTime.Seconds())
-	case CommonLogWithVHost:
-		n, _ = fmt.Fprintf(LogFile.out, CommonLogWithVHost, "-", r.ip,
-			timeFormatted, requestLine, r.status, r.responseBytes,
-			r.elapsedTime.Seconds())
-	case NCSALog:
-		n, _ = fmt.Fprintf(LogFile.out, NCSALog, r.ip,
-			timeFormatted, requestLine, r.status, r.responseBytes,
-			r.elapsedTime.Seconds(), r.referer, r.agent)
-	case RefererLog:
-		n, _ = fmt.Fprintf(LogFile.out, RefererLog, r.referer, r.uri)
-	case AgentLog:
-		n, _ = fmt.Fprintf(LogFile.out, AgentLog, r.agent)
-	default:
-		// Common log.
-		n, _ = fmt.Fprintf(LogFile.out, CommonLog, r.ip, timeFormatted,
-			requestLine, r.status, r.responseBytes, r.elapsedTime.Seconds())
-	}
-
-	if LogFile.size+int64(n) >= MaxFileSize {
+	if LogFile.size+int64(n) >= LogFile.Opts.MaxFileSize {
 		LogFile.Rotate()
 	}
 
@@ -101,6 +99,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	record := &ApacheLogRecord{
 		ResponseWriter: rw,
+		LogFmt:         LogFile.Opts.LogFormat,
 		ip:             clientIP,
 		time:           time.Time{},
 		method:         r.Method,

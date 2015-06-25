@@ -32,6 +32,7 @@ type dest uint8
 // Locations for log writing.
 const (
 	Stdout dest = iota
+	Stderr
 	File
 	Both
 )
@@ -40,25 +41,26 @@ const (
 // randName appends a random string of digits to the end.
 const archPrefix = "._archive"
 
-var (
+// Options is the structure containing the options for a given Log.
+type Options struct {
 	// LogFormat determines the format of the log. Most standard
 	// formats found in Apache's mod_log_config docs are supported.
-	LogFormat = CommonLog
+	LogFormat LogFmt
 
 	// LogDestination determines where the Handler will write to.
 	// By default it writes to Stdout and LogName.
-	LogDestination = Both
+	LogDestination dest
 
 	// LogName is the name of the log the handler will write to.
 	// It defaults to "access.log", but can be set to anything you
 	// want.
-	LogName = "access.log"
+	LogName string
 
 	// ArchiveDir is the directory where the archives will be stored.
 	// If set to "" (empty string) it'll be set to the current directory.
 	// It defaults to "archives", so it'll look a little something like
 	// this: '/home/user/files/archives/'
-	ArchiveDir = "archives"
+	ArchiveDir string
 
 	// MaxFileSize is the maximum size of a log file in bytes.
 	// It defaults to 1 Gigabyte (multiple of 1024, not 1000),
@@ -66,8 +68,10 @@ var (
 	//
 	// Log files larger than this size will be compressed into
 	// archive files.
-	MaxFileSize int64 = 1 * Gigabyte
+	MaxFileSize int64
+}
 
+var (
 	// LogFile is the active Log.
 	LogFile *Log
 
@@ -82,22 +86,24 @@ var (
 // aforementioned file), our pool of random names, and a mutex lock
 // to keep race conditions from tripping us up.
 type Log struct {
-	file        *os.File  // pointer to the open file
-	size        int64     // number of bytes written to file
-	out         io.Writer // current io.Writer
-	pool        *randPool // pool of random names
-	*sync.Mutex           // mutex for locking
+	Opts        *Options  // Current log options.
+	file        *os.File  // Pointer to the open file.
+	size        int64     // Number of bytes written to filel.
+	out         io.Writer // Current io.Writer.
+	pool        *randPool // Pool of random names.
+	*sync.Mutex           // Mutex for locking.
 }
 
-// SetLog sets LogFile and starts the check for 'cur'.
-func SetLog() {
-	var err error
-
-	LogFile, err = NewLog()
-	if err != nil {
-		panic(err)
+// Init sets LogFile and starts the check for 'cur'.
+func (l *Log) Init() {
+	if l == nil {
+		var err error
+		l, err = NewLog()
+		if err != nil {
+			panic(err)
+		}
 	}
-
+	LogFile = l
 	LogFile.Start()
 }
 
@@ -107,36 +113,50 @@ func SetLog() {
 // If it cannot create or open a file it'll return nil for *Log
 // and the applicable error.
 func NewLog() (*Log, error) {
-	file, err := newFile()
+
+	log := &Log{
+		Opts: defaultOptions(),
+	}
+
+	file, err := log.newFile()
 	if err != nil {
 		return nil, err
 	}
 
 	stat, err := file.Stat()
-	if err != nil {
-		panic(err)
-	}
-	size := stat.Size()
 
-	log := &Log{
-		file,
-		size,
-		nil,
-		newRandPool(25),
-		&sync.Mutex{},
+	var size int64
+	if err == nil {
+		size = stat.Size()
 	}
 
-	log.SetWriter(true)
+	log.file = file
+	log.size = size
+	log.SetWriter()
+	log.pool = newRandPool(25)
+	log.Mutex = &sync.Mutex{}
 
 	return log, nil
+}
+
+// defaultOptions returns the default configuration for the Options
+// structure.
+func defaultOptions() *Options {
+	return &Options{
+		LogFormat:      CommonLog,
+		LogDestination: Both,
+		LogName:        "access.log",
+		ArchiveDir:     "archives",
+		MaxFileSize:    100 * Byte,
+	}
 }
 
 // newFile returns a 'new' file to write logs to.
 // It's simply a wrapper around os.OpenFile.
 // While it says 'new', it'll return an already existing log file
 // if one exists.
-func newFile() (file *os.File, err error) {
-	file, err = os.OpenFile(LogName,
+func (l *Log) newFile() (file *os.File, err error) {
+	file, err = os.OpenFile(l.Opts.LogName,
 		os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600)
 	return
 }
@@ -149,12 +169,13 @@ func (l *Log) Start() {
 	// inside a Goroutine because, unless there's a *ton* of archive
 	// files and the current Log is just shy of MaxFileSize, it'll
 	// finish before Log fills up and needs to be rotated.
-	findCur()
+	l.findCur()
 }
 
 // findCur finds the current archive log number. If any errors occur it'll
-func findCur() {
-	dir, err := os.Open(ArchiveDir)
+// panic because this needs refactoring.
+func (l *Log) findCur() {
+	dir, err := os.Open(l.Opts.ArchiveDir)
 	if err != nil {
 		panic(err)
 	}
@@ -200,6 +221,8 @@ func findCur() {
 // Rotate will rotate the logs so that the current (theoretically
 // full) log will be compressed and added to the archive and a new
 // log generated.
+// Will panic if we cannot replace our physical file.
+// (See newFile function for more information.)
 func (l *Log) Rotate() {
 	var err error
 
@@ -207,10 +230,10 @@ func (l *Log) Rotate() {
 	randName := l.pool.get()
 
 	// Rename so we can release our lock on the file asap.
-	os.Rename(LogName, randName)
+	os.Rename(LogFile.Opts.LogName, randName)
 
 	// Replace our physical file.
-	l.file, err = newFile()
+	l.file, err = l.newFile()
 	if err != nil {
 		panic(err)
 	}
@@ -220,19 +243,19 @@ func (l *Log) Rotate() {
 
 	// Reset the writer (underlying io.Writer would otherwise point to the
 	// fd of the old, renamed file).
-	l.SetWriter(false)
+	l.SetWriter()
 
 	// Place the used name back into the pool for future use.
 	l.pool.put(randName)
 
-	go doRotate(randName)
+	go l.doRotate(randName)
 }
 
-func doRotate(randName string) {
+func (l *Log) doRotate(randName string) {
 	// From here on out we don't need to worry about time because we've
 	// already moved the Log file and created a new, unlocked one for
 	// our handler to write to.
-	path := filepath.Join(ArchiveDir, LogName)
+	path := filepath.Join(l.Opts.ArchiveDir, l.Opts.LogName)
 
 	// E.g., "access.log_01.gz"
 	// We throw in the underscore before the number to try to help
@@ -279,21 +302,16 @@ func (l *Log) Close() {
 }
 
 // SetWriter sets Log's writer depending on LogDestination.
-func (l *Log) SetWriter(init bool) {
-	// Catch initialization case without breaking up any more of the
-	// logic.
-	if init {
-		l.out = io.MultiWriter(os.Stdout, l.file)
-	} else {
-		switch LogDestination {
-		case Stdout:
-			l.out = os.Stdout
-		case File:
-			l.out = LogFile.file
-		default:
-			l.out = io.MultiWriter(os.Stdout, LogFile.file)
-		}
+func (l *Log) SetWriter() {
+
+	logMap := map[dest]io.Writer{
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+		File:   l.file,
+		Both:   io.MultiWriter(os.Stdout, l.file),
 	}
+
+	l.out = logMap[l.Opts.LogDestination]
 }
 
 // randPool is a pool of random names used for rotating log files.

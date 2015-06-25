@@ -24,8 +24,7 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	useful.MaxFileSize = 1 * MB
-	useful.SetLog()
+	useful.LogFile.Init()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
