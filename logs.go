@@ -150,7 +150,7 @@ func DefaultOptions() *Options {
 		LogDestination: Both,
 		LogName:        "access.log",
 		ArchiveDir:     "archives",
-		MaxFileSize:    100 * Byte,
+		MaxFileSize:    1 * Gigabyte,
 	}
 }
 
@@ -160,7 +160,7 @@ func DefaultOptions() *Options {
 // if one exists.
 func (l *Log) newFile() (file *os.File, err error) {
 	file, err = os.OpenFile(l.Opts.LogName,
-		os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600)
+		os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
 	return
 }
 
