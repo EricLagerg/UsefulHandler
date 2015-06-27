@@ -1,11 +1,19 @@
 package useful
 
 import (
+	"bufio"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// ErrUnHijackable indicates an unhijackable connection. I.e., (one of)
+// the underlying http.ResponseWriter(s) doesn't support the http.Hijacker
+// interface.
+var ErrUnHijackable = errors.New("A(n) underlying ResponseWriter doesn't support the http.Hijacker interface")
 
 // These format strings correspond with the log formats described in
 // https://httpd.apache.org/docs/2.2/mod/mod_log_config.html
@@ -62,6 +70,16 @@ type ApacheLogRecord struct {
 	responseBytes         int64
 	elapsedTime           time.Duration
 	referer, agent        string
+}
+
+// Hijack implements the http.Hijacker interface to allow connection
+// hijacking.
+func (a *ApacheLogRecord) Hijack() (rwc net.Conn, buf *bufio.ReadWriter, err error) {
+	hj, ok := a.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, ErrUnHijackable
+	}
+	return hj.Hijack()
 }
 
 // Log will log an entry to the io.Writer specified by LogDestination.
