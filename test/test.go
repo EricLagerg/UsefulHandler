@@ -24,7 +24,7 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	useful.LogFile.Init()
+	useful.LogFile.Init(nil)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")

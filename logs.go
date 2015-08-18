@@ -307,7 +307,7 @@ func (l *Log) Close() {
 // SetWriter sets Log's writer depending on LogDestination.
 func (l *Log) SetWriter() {
 
-	logMap := map[dest]io.Writer{
+	logMap := [...]io.Writer{
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 		File:   l.file,
