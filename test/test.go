@@ -8,7 +8,7 @@ import (
 	"os"
 	"runtime/pprof"
 
-	"../"
+	useful "github.com/EricLagerg/UsefulHandler"
 )
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
@@ -24,14 +24,19 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	useful.LogFile.Init(nil)
-
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		io.WriteString(w, "Hello, world!")
 	})
 
-	myHandler := useful.NewUsefulHandler(handler)
+	opts := useful.Options{
+		Logger:      useful.NCSALog,
+		Destination: useful.Both,
+		ArchiveDir:  "archives",
+		LogName:     "access.log",
+		MaxFileSize: 2 * useful.Megabyte,
+	}
+	myHandler := useful.NewUsefulHandler(handler, opts)
 
 	http.Handle("/", myHandler)
 	server := http.Server{

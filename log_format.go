@@ -3,58 +3,41 @@ package useful
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
-// LogFmt is the interface implemented by log types to print an
+// Logger is the interface implemented by log types to print an
 // ApacheLogRecord in the desired format.
-type LogFmt interface {
-	Print(w io.Writer, r *ApacheLogRecord) int
+type Logger interface {
+	WriteLog(w io.Writer, r ApacheLogRecord) (n int, err error)
 }
 
-const (
-	timeFormat    = "02/Jan/2006 03:04:05"
-	requestFormat = "%s %s %s"
-)
+const timeFormat = "02/Jan/2006 03:04:05"
 
 // timeRequest returns the formatted time of the request and the request line.
-func (r *ApacheLogRecord) formattedTimeRequest() (string, string) {
-	return r.time.Format(timeFormat), fmt.Sprintf(requestFormat, r.method, r.uri, r.protocol)
+func (r ApacheLogRecord) formattedTimeRequest() (string, string) {
+	return r.time.Format(timeFormat), strings.Join([]string{r.method, r.uri, r.protocol}, " ")
 }
 
-func (l commonLog) Print(w io.Writer, r *ApacheLogRecord) int {
+func (l commonLog) WriteLog(w io.Writer, r ApacheLogRecord) (n int, err error) {
 	timeFormatted, requestLine := r.formattedTimeRequest()
-
-	n, _ := fmt.Fprintf(w, l.Format, r.ip, timeFormatted,
-		requestLine, r.status, r.responseBytes, r.elapsedTime.Seconds())
-
-	return n
+	return fmt.Fprintf(w, string(l), r.ip, timeFormatted, requestLine, r.status, r.responseBytes)
 }
 
-func (l commonLogWithVHost) Print(w io.Writer, r *ApacheLogRecord) int {
+func (l commonLogWithVHost) WriteLog(w io.Writer, r ApacheLogRecord) (n int, err error) {
 	timeFormatted, requestLine := r.formattedTimeRequest()
-
-	n, _ := fmt.Fprintf(w, l.Format, r.ip, timeFormatted,
-		requestLine, r.status, r.responseBytes, r.elapsedTime.Seconds())
-
-	return n
+	return fmt.Fprintf(w, string(l), r.ip, timeFormatted, requestLine, r.status, r.responseBytes)
 }
 
-func (l ncsaLog) Print(w io.Writer, r *ApacheLogRecord) int {
+func (l ncsaLog) WriteLog(w io.Writer, r ApacheLogRecord) (n int, err error) {
 	timeFormatted, requestLine := r.formattedTimeRequest()
-
-	n, _ := fmt.Fprintf(w, l.Format, r.ip,
-		timeFormatted, requestLine, r.status, r.responseBytes,
-		r.elapsedTime.Seconds(), r.referer, r.agent)
-
-	return n
+	return fmt.Fprintf(w, string(l), r.ip, timeFormatted, requestLine, r.status, r.responseBytes, r.referer, r.agent)
 }
 
-func (l refererLog) Print(w io.Writer, r *ApacheLogRecord) int {
-	n, _ := fmt.Fprintf(w, l.Format, r.referer, r.uri)
-	return n
+func (l refererLog) WriteLog(w io.Writer, r ApacheLogRecord) (n int, err error) {
+	return fmt.Fprintf(w, string(l), r.referer, r.uri)
 }
 
-func (l agentLog) Print(w io.Writer, r *ApacheLogRecord) int {
-	n, _ := fmt.Fprintf(w, l.Format, r.agent)
-	return n
+func (l agentLog) WriteLog(w io.Writer, r ApacheLogRecord) (n int, err error) {
+	return fmt.Fprintf(w, string(l), r.agent)
 }

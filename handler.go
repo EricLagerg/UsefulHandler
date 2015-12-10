@@ -12,12 +12,14 @@ import (
 // our own type.)
 type Handler struct {
 	handler http.Handler
+	*Log
 }
 
-// NewUsefulHandler returns a *Handler with logging capabilities as well
+// NewUsefulHandler returns a Handler with logging capabilities as well
 // as potentially compressed content.
-func NewUsefulHandler(handler http.Handler) http.Handler {
+func NewUsefulHandler(handler http.Handler, opts ...Options) http.Handler {
 	return &Handler{
-		ch.CompressedHandler(handler),
+		handler: ch.CompressedHandler(handler),
+		Log:     NewLog(opts...),
 	}
 }

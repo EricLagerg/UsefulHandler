@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,6 +36,7 @@ const (
 	Stderr
 	File
 	Both
+	Writer
 )
 
 // archPrefix is the temporary archive file's prefix before
@@ -43,13 +45,13 @@ const archPrefix = "._archive"
 
 // Options is the structure containing the options for a given Log.
 type Options struct {
-	// LogFormat determines the format of the log. Most standard
+	// Logger determines the format of the log. Most standard
 	// formats found in Apache's mod_log_config docs are supported.
-	LogFormat LogFmt
+	Logger
 
-	// LogDestination determines where the Handler will write to.
+	// Destination determines where the Handler will write to.
 	// By default it writes to Stdout and LogName.
-	LogDestination dest
+	Destination dest
 
 	// LogName is the name of the log the handler will write to.
 	// It defaults to "access.log", but can be set to anything you
@@ -71,14 +73,9 @@ type Options struct {
 	MaxFileSize int64
 }
 
-var (
-	// LogFile is the active Log.
-	LogFile *Log
-
-	// cur is the current log iteration. E.g., if there are 10
-	// archived logs, cur will be 11.
-	cur int64
-)
+// cur is the current log iteration. E.g., if there are 10
+// archived logs, cur will be 11.
+var cur int64
 
 // Log is a structure with our open file we log to, the size of said file
 // (measured by the number of bytes written to it, or it's size on
@@ -86,25 +83,14 @@ var (
 // aforementioned file), our pool of random names, and a mutex lock
 // to keep race conditions from tripping us up.
 type Log struct {
-	Opts        *Options  // Current log options.
-	file        *os.File  // Pointer to the open file.
-	size        int64     // Number of bytes written to filel.
-	out         io.Writer // Current io.Writer.
-	pool        *randPool // Pool of random names.
-	*sync.Mutex           // Mutex for locking.
-}
+	*sync.Mutex // Guards the following.
 
-// Init sets LogFile and starts the check for 'cur'.
-func (l *Log) Init(opts *Options) {
-	if l == nil {
-		var err error
-		l, err = NewLog(opts)
-		if err != nil {
-			panic(err)
-		}
-	}
-	LogFile = l
-	LogFile.Start()
+	size int64     // Number of bytes written to file.
+	file *os.File  // Pointer to the open file.
+	out  io.Writer // Current io.Writer.
+	pool *randPool // Pool of random names.
+
+	Options // Current log options.
 }
 
 // NewLog returns a new Log initialized to the default values.
@@ -112,19 +98,22 @@ func (l *Log) Init(opts *Options) {
 // it'll create a new one, otherwise it opens 'LogName'.
 // If it cannot create or open a file it'll return nil for *Log
 // and the applicable error.
-func NewLog(opts *Options) (*Log, error) {
-	if opts == nil {
-		opts = DefaultOptions()
+func NewLog(opts ...Options) *Log {
+
+	var o Options
+	if len(opts) > 0 {
+		o = opts[0]
+	} else {
+		o = DefaultOptions()
 	}
 
-	log := &Log{
-		Opts: opts,
+	if o.LogName == "" {
+		o.LogName = "access.log"
 	}
 
-	file, err := log.newFile()
-	if err != nil {
-		return nil, err
-	}
+	log := &Log{Options: o}
+
+	file := log.newFile()
 
 	stat, err := file.Stat()
 
@@ -134,23 +123,22 @@ func NewLog(opts *Options) (*Log, error) {
 	}
 
 	log.file = file
-	log.size = size
 	log.SetWriter()
 	log.pool = newRandPool(25)
 	log.Mutex = &sync.Mutex{}
-
-	return log, nil
+	log.size = size
+	return log
 }
 
 // DefaultOptions returns the default configuration for the Options
 // structure.
-func DefaultOptions() *Options {
-	return &Options{
-		LogFormat:      CommonLog,
-		LogDestination: Both,
-		LogName:        "access.log",
-		ArchiveDir:     "archives",
-		MaxFileSize:    1 * Gigabyte,
+func DefaultOptions() Options {
+	return Options{
+		Logger:      CommonLog,
+		Destination: Both,
+		LogName:     "access.log",
+		ArchiveDir:  "archives",
+		MaxFileSize: 1 * Gigabyte,
 	}
 }
 
@@ -158,10 +146,13 @@ func DefaultOptions() *Options {
 // It's simply a wrapper around os.OpenFile.
 // While it says 'new', it'll return an already existing log file
 // if one exists.
-func (l *Log) newFile() (file *os.File, err error) {
-	file, err = os.OpenFile(l.Opts.LogName,
+func (l *Log) newFile() *os.File {
+	file, err := os.OpenFile(l.LogName,
 		os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
-	return
+	if err != nil {
+		log.Println(err)
+	}
+	return file
 }
 
 // Start begins the check for 'cur'.
@@ -178,9 +169,9 @@ func (l *Log) Start() {
 // findCur finds the current archive log number. If any errors occur it'll
 // panic because this needs refactoring.
 func (l *Log) findCur() {
-	dir, err := os.Open(l.Opts.ArchiveDir)
+	dir, err := os.Open(l.ArchiveDir)
 	if err != nil {
-		panic(err)
+		log.Println(err)
 	}
 	defer dir.Close()
 
@@ -207,17 +198,17 @@ func (l *Log) findCur() {
 
 	h := strings.LastIndex(highest, "#")
 	if h == -1 {
-		panic("Could not find current file number.")
+		log.Println("Could not find current file number.")
 	}
 
 	u := strings.LastIndex(highest[:], "_")
 	if u == -1 {
-		panic("Could not find current file number.")
+		log.Println("Could not find current file number.")
 	}
 
 	cur, err = strconv.ParseInt(highest[h+1:u-1], 10, 64)
 	if err != nil {
-		panic(err)
+		log.Println(err)
 	}
 }
 
@@ -227,19 +218,14 @@ func (l *Log) findCur() {
 // Will panic if we cannot replace our physical file.
 // (See newFile function for more information.)
 func (l *Log) Rotate() {
-	var err error
-
 	// For speed.
 	randName := l.pool.get()
 
 	// Rename so we can release our lock on the file asap.
-	os.Rename(LogFile.Opts.LogName, randName)
+	os.Rename(l.LogName, randName)
 
 	// Replace our physical file.
-	l.file, err = l.newFile()
-	if err != nil {
-		panic(err)
-	}
+	l.file = l.newFile()
 
 	// Reset the size.
 	l.size = 0
@@ -258,7 +244,7 @@ func (l *Log) doRotate(randName string) {
 	// From here on out we don't need to worry about time because we've
 	// already moved the Log file and created a new, unlocked one for
 	// our handler to write to.
-	path := filepath.Join(l.Opts.ArchiveDir, l.Opts.LogName)
+	path := filepath.Join(l.ArchiveDir, l.LogName)
 
 	// E.g., "access.log_01.gz"
 	// We throw in the underscore before the number to try to help
@@ -269,39 +255,38 @@ func (l *Log) doRotate(randName string) {
 
 	archive, err := os.Create(archiveName)
 	if err != nil {
-		panic(err)
+		log.Println(err)
 	}
 	defer archive.Close()
 
 	oldLog, err := os.Open(randName)
 	if err != nil {
-		panic(err)
+		log.Println(err)
 	}
 	defer oldLog.Close()
 
 	gzw, err := gzip.NewWriterLevel(archive, gzip.BestCompression)
 	if err != nil {
-		panic(err)
+		log.Println(err)
 	}
 	defer gzw.Close()
 
 	_, err = io.Copy(gzw, oldLog)
 	if err != nil {
-		panic(err)
+		log.Println(err)
 	}
 
 	err = os.Remove(randName)
 	if err != nil {
-		panic(err)
+		log.Println(err)
 	}
 }
 
 // Close closes the Log file.
 func (l *Log) Close() {
 	l.Lock()
-	defer l.Unlock()
-
 	l.file.Close()
+	l.Unlock()
 }
 
 // SetWriter sets Log's writer depending on LogDestination.
@@ -314,7 +299,7 @@ func (l *Log) SetWriter() {
 		Both:   io.MultiWriter(os.Stdout, l.file),
 	}
 
-	l.out = logMap[l.Opts.LogDestination]
+	l.out = logMap[l.Destination]
 }
 
 // randPool is a pool of random names used for rotating log files.
@@ -330,11 +315,9 @@ func newRandPool(n int) *randPool {
 		make(chan string, n),
 		&sync.Mutex{},
 	}
-
 	for i := 0; i < n; i++ {
 		pool.put(randName(archPrefix))
 	}
-
 	return pool
 }
 
